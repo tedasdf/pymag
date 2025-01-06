@@ -10,11 +10,11 @@ class File():
         self.token = token
         self.func_list = [] #  list of func instantiated 
         self.classes_list = [] # List of class instantiated
-        # NEXT PR self.root_node = None
-        # NEXT PR this is for later development self.imported_list = []
+        self.constant_list = []
+        self.root_node = None
+        self.imported_list = []
     
     def add_func_list(self, new_func):
-        new_func ,_ = new_func
         self.func_list.append(new_func)
     
     def add_classes_list(self , new_class):
@@ -45,16 +45,14 @@ class UserDefinedClass():
     def __repr__(self):
         return f"<UserDefineClass attribute={self.attribute} token={self.token} line_no={self.line_number} self.function={self.functions} inherit={self.inherits}>"
    
-    def add_function(self, func_tuple):
-        new_func , is_contructor = func_tuple
-        if is_contructor:
-            self.attribute = new_func
-        else:
-            self.functions.append(new_func)
+    def add_function(self, new_func):
+        self.functions.append(new_func)
     
-    def assign_attribute(self, attr_tree):
-        # store ast tree fisrt NEXT PR do the thing 
-        raise NotImplementedError
+    def assign_attribute(self, processes):
+        if processes:
+            for process in processes:
+                print(process)
+        return
     
     def all_symbols(self):
         #provide useable symbol within the class

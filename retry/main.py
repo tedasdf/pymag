@@ -8,7 +8,10 @@ import asyncio
 
 from python import Python
 from model import Call, File, UserDefinedClass, Variable, UserDefinedFunc
-from db.main import CallModel, FileModel, FunctionModel, VariableModel
+# from db.main import CallModel, FileModel, FunctionModel, VariableModel
+
+
+language = Python()
 
 def find_index(lst, element):
     if element in lst:
@@ -32,7 +35,6 @@ async def run_post_file(payload):
         )
         print("POST Response:", response.json())
 
-language = Python()
 
 def get_sources_and_language(raw_source_paths):
     """
@@ -53,7 +55,6 @@ def get_sources_and_language(raw_source_paths):
         for root, _, files in os.walk(source):
             for f in files:
                 individual_files.append((os.path.join(root, f), False))
-
 
     sources = set()
     for source, explicity_added in individual_files:
@@ -78,25 +79,28 @@ def make_file_group(tree, file_path):
     :rtype: File
     """
 
-    subgroup_trees, node_trees, body_trees = language.separate_namespaces(tree)
-
+    subgroup_trees, node_trees, body_trees, import_trees = language.separate_namespaces(tree)
+    
     token = '.'.join(
         part for part in file_path.replace('.py', '').split('/') if part and part != '..'
     )
 
     file_inst = File(token)
 
+    file_inst.import_list = language.make_import(import_trees)
     # NEXT PR implement nested functino
     for node_tree in node_trees:
         file_inst.add_func_list(language.make_function(node_tree, parent=file_inst))
+
     # ## NEW VERSION NEXT PR MAKE ROOT NODE FOR FILE GROUP
-    # file_grouptest.root_node = language.new_make_root_node(new_body_trees, parent=file_grouptest)
+    file_inst.root_node, file_inst.constant_list = language.make_root_node(body_trees)
+    ## the if statement is inflexible so NEXT PR need to figure out how to improve that 
+    
 
     for subgroup_tree in subgroup_trees:
         file_inst.add_classes_list(language.make_class(subgroup_tree, parent=file_inst))
     
     return file_inst
-
 
 def main(sys_argv=None):
     """
@@ -152,7 +156,7 @@ def main(sys_argv=None):
 
     for file_key, file_symbol in file_group.items():
         # Iterate through all functions in the current file
-        for func in file_symbol.all_symbols():
+        for func in file_symbol.all_func():
             for single_process in func.process:
                 process, ast_tree = single_process
 
@@ -228,17 +232,22 @@ def main(sys_argv=None):
     #             elif isinstance(single_process, Variable):
     #                 if isinstance(single_process.points_to , UserDefinedFunc):
     #                     output_list.append(VariableModel(points_to=file_model.function_dict[single_process.points_to.func.token] , token= single_process.token))
-    file_model = FileModel(
-        token="abc",
-        path="/example/path",
-        function_list={},  # No circular references here
-        class_list={}      # No circular references here
-    )
+   
+   
+   
+    # parse into pydantic
+
+    # file_model = FileModel(
+    #     token="abc",
+    #     path="/example/path",
+    #     function_list={},  # No circular references here
+    #     class_list={}      # No circular references here
+    # )
 
 
 
 
-    print(file_model.model_dump())
+    # print(file_model.model_dump())
     # payload = {
     #     "source_path": file_model.token,
     #     "file_group": file_model
@@ -246,8 +255,6 @@ def main(sys_argv=None):
     # asyncio.run(run_post_file(payload))
 
         # check the process of the func
-    # parse into pydantic
-
 
 
     # send to fastapi 

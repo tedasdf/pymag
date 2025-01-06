@@ -58,6 +58,7 @@ def process_assign(element):
     :param element ast:
     :rtype: Variable
     """
+    print(ast.dump(element, indent=4))
 
     if type(element.value) != ast.Call and type(element.value) != ast.Constant:
         return []
@@ -79,10 +80,12 @@ def process_assign(element):
         ret.append(Variable(token, call, element.lineno))
     return ret
 
-def make_operations(lines):
+def make_operations(lines , is_root=False):
     operation = []
     for tree in lines:
-        if type(tree) == ast.Assign:
+        if is_root and check_rootnode(tree):
+            return make_operations(tree.body)
+        elif type(tree) == ast.Assign:
             operation.append((process_assign(tree), tree))
         elif type(tree) in AstControlType:
             line_no = tree.lineno
@@ -99,11 +102,8 @@ def make_operations(lines):
                 call = get_call_from_func_element(tree.value.func)
                 if call:
                     operation.append((call , tree))
-            else:
-                print(ast.unparse(tree))
-                operation.append((ast.unparse(tree), tree))
-    return operation
-    raise NotImplementedError # return a list of  List[Tuple( [Call | Variables | Logic Statement ] , corresponding ast tree)]
+                
+    return operation # return a list of  List[Tuple( [Call | Variables | Logic Statement ] , corresponding ast tree)]
 
 def get_inherits(tree):
     """
@@ -115,6 +115,40 @@ def get_inherits(tree):
     """
     return [base.id for base in tree.bases if type(base) == ast.Name]
 
+def check_rootnode(node):
+    if isinstance(node, ast.If):  # Check if it's an `If` node
+        # Check if the test is a comparison: __name__ == "__main__"
+        if (
+            isinstance(node.test, ast.Compare)
+            and isinstance(node.test.left, ast.Name)
+            and node.test.left.id == "__name__"
+            and len(node.test.ops) == 1
+            and isinstance(node.test.ops[0], ast.Eq)
+            and len(node.test.comparators) == 1
+            and isinstance(node.test.comparators[0], ast.Constant)
+            and node.test.comparators[0].value == "main"
+        ):
+            return True
+    return False
+
+def make_constant(tree):
+    result_list = []
+
+    for el in tree:
+        # Check for assignment of constants, dicts, lists, or tuples
+        if isinstance(el, ast.Assign):
+            # Iterate through all targets in the assignment
+            for target in el.targets:
+                # Ensure the target is a variable (ast.Name)
+                if isinstance(target, ast.Name):
+                    result_list.append(target.id)  # Append the variable name
+
+    return result_list
+        
+def make_attribute(tree):
+    print(ast.dump(tree, indent=4))
+
+        
 class Python():
     @staticmethod
     def get_tree(filename):
@@ -147,6 +181,7 @@ class Python():
         groups = []
         nodes = []
         body = []
+        import_list = [] # this is import from same file 
         for el in tree.body:
             if type(el) in (ast.FunctionDef, ast.AsyncFunctionDef):
                 nodes.append(el)
@@ -155,11 +190,10 @@ class Python():
             elif getattr(el, 'body', None):
                 body.append(el)
             elif type(el) in (ast.Import , ast.ImportFrom):
-                continue
-                # Current target is single File NEXT PR import_list.append(el)
+                import_list.append(el)
             else:
                 body.append(el)
-        return groups, nodes, body
+        return groups, nodes, body , import_list
     
     @staticmethod
     def make_function(tree, parent):
@@ -173,17 +207,15 @@ class Python():
         """
         token = tree.name
         line_number = tree.lineno
+        print("MAKE OPERATIONS")
         processes = make_operations(tree.body)
-
-        if isinstance(parent, UserDefinedClass) and token in ['__init__', '__new__']:
-            return UserDefinedFunc(token, processes , line_number=line_number), True
-        
-        return UserDefinedFunc(token, processes , line_number=line_number), False
+        print(processes)
+        return UserDefinedFunc(token, processes , line_number=line_number)
     
     @staticmethod
     def make_class(tree, parent):
         assert type(tree) == ast.ClassDef
-        _, node_trees, _ = Python.separate_namespaces(tree)
+        _, node_trees, _ , _ = Python.separate_namespaces(tree)
 
         token = tree.name
         line_number = tree.lineno
@@ -191,7 +223,31 @@ class Python():
 
         class_group = UserDefinedClass(token,line_number, inherits)
         for node_tree in node_trees:
-            class_group.add_function(Python.make_function(node_tree , parent=class_group))
+            if isinstance(class_group, UserDefinedClass) and node_tree.name in ['__init__', '__new__']:
+                class_group.assign_attribute(make_attribute(node_tree))
+            else:
+                class_group.add_function(Python.make_function(node_tree , parent=class_group))
 
         # NEXT PR NESTED CLASS
         return class_group
+
+    @staticmethod
+    def make_root_node(tree):
+        return make_operations(tree, True), make_constant(tree)
+
+    @staticmethod
+    def make_import(trees):
+        import_list = []
+    
+        for import_tree in trees:
+            if isinstance(import_tree, ast.ImportFrom):
+                # only importing from the same repo matters so no need to have import 
+                # first filter
+                for alias in import_tree.names:
+                    import_list.append({
+                        'from': import_tree.module, 
+                        'function': alias.name, 
+                        'as': alias.asname
+                    })
+        
+        return import_list
