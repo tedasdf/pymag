@@ -27,7 +27,7 @@ def get_call_from_func_element(func):
     :param func ast:
     :rtype: Call|None
     """
-    assert type(func) in (ast.Attribute, ast.Name, ast.Subscript, ast.Call)
+    assert type(func) in (ast.Attribute, ast.Name, ast.Subscript, ast.Call , ast.BinOp)
     if type(func) == ast.Attribute:
         owner_token = []
         val = func.value
@@ -51,33 +51,50 @@ def get_call_from_func_element(func):
 
 def process_assign(element):
     """
-    Given an element from the ast which is an assignment statement, return a
-    Variable that points_to the type of object being assigned. For now, the
-    points_to is a string but that is resolved later.
-
-    :param element ast:
-    :rtype: Variable
+    Process an assignment AST node to extract variables and associated calls.
+    Handles nested binary operations like `&`.
+    
+    :param element: An `Assign` node from the AST.
+    :return: A list of Variable instances or an empty list if no valid assignment is found.
     """
-    print(ast.dump(element, indent=4))
+    def extract_calls(value):
+        """Recursively extract all calls and attributes from a BinOp."""
+        calls = []
+        if isinstance(value, ast.BinOp):  # Handle nested binary operations
+            calls.extend(extract_calls(value.left))
+            calls.extend(extract_calls(value.right))
+        elif isinstance(value, ast.Call):  # Handle function calls
+            calls.append(get_call_from_func_element(value.func))
+        elif isinstance(value, ast.Attribute):  # Handle attributes like `dict.keys`
+            calls.append(get_call_from_func_element(value))
+        elif isinstance(value, ast.Name):  # Handle simple variable names
+            calls.append(value.id)  # Add the variable name
+        return calls
 
-    if type(element.value) != ast.Call and type(element.value) != ast.Constant:
-        return []
+    def extract_targets(target):
+        """Recursively extract all variable names from assignment targets."""
+        variables = []
+        if isinstance(target, ast.Name):  # Handle simple variable names
+            variables.append(target.id)
+        elif isinstance(target, ast.Tuple):  # Handle tuple unpacking
+            for elt in target.elts:  # Recursively process tuple elements
+                variables.extend(extract_targets(elt))
+        return variables
     
-    call = None
-    if type(element.value) == ast.Constant:
-        call = element.value.value
-    else:
-        call = get_call_from_func_element(element.value.func)
-    
-    if call == None:
+    if not isinstance(element.value, (ast.BinOp, ast.Call, ast.Attribute)):
+        return []  # Ignore non-call or non-operation assignments
+
+    calls = extract_calls(element.value)
+    if not calls:  # No valid calls extracted
         return []
 
     ret = []
     for target in element.targets:
-        if type(target) != ast.Name:
-            continue
-        token = target.id
-        ret.append(Variable(token, call, element.lineno))
+        # Extract all variable names from the target
+        variable_names = extract_targets(target)
+        for token in variable_names:
+            ret.append(Variable(token, calls, element.lineno))
+        
     return ret
 
 def make_operations(lines , is_root=False):
@@ -86,7 +103,7 @@ def make_operations(lines , is_root=False):
         if is_root and check_rootnode(tree):
             return make_operations(tree.body)
         elif type(tree) == ast.Assign:
-            operation.append((process_assign(tree), tree))
+            operation.append(process_assign(tree))
         elif type(tree) in AstControlType:
             line_no = tree.lineno
             if type(tree) == ast.Try:
@@ -96,13 +113,12 @@ def make_operations(lines , is_root=False):
             subtree = tree.body
             process = make_operations(subtree)
             logic_inst = LogicStatement(cond_type , process, line_no)
-            operation.append((logic_inst, tree))
+            operation.append(logic_inst)
         else:
             if type(tree) == ast.Expr and type(tree.value) == ast.Call:
                 call = get_call_from_func_element(tree.value.func)
                 if call:
-                    operation.append((call , tree))
-                
+                    operation.append(call)
     return operation # return a list of  List[Tuple( [Call | Variables | Logic Statement ] , corresponding ast tree)]
 
 def get_inherits(tree):
@@ -146,9 +162,47 @@ def make_constant(tree):
     return result_list
         
 def make_attribute(tree):
-    print(ast.dump(tree, indent=4))
+    attr = []
+    def extract_self_attributes(node):
+        """Recursively extract self attributes from any node."""
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == "self":
+                    attr.append(target.attr)
+        # Recursively handle child nodes
+        for child in ast.iter_child_nodes(node):
+            extract_self_attributes(child)
 
-        
+    for statement in tree.body:
+        extract_self_attributes(statement)
+    return attr
+
+def make_function_io(tree):
+    """
+    Extract input arguments and output values from all functions in the given Python code.
+
+    Args:
+        code (str): The source code as a string.
+
+    Returns:
+        list: A list of dictionaries, where each dictionary contains:
+              - "inputs": List of input argument names
+              - "outputs": List of output variable names or expressions
+    """
+    input_list = [arg.arg for arg in tree.args.args]
+    # Extract output values
+    output_list = []
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Return):
+            if isinstance(stmt.value, ast.Tuple):  # Multiple return values
+                output_list = [el.id for el in stmt.value.elts]
+            elif isinstance(stmt.value, ast.Call):
+                output_list =  [get_call_from_func_element(stmt.value)]
+            elif stmt.value:  # Single return value
+                output_list = [stmt.value.id]
+
+    return input_list , output_list
+
 class Python():
     @staticmethod
     def get_tree(filename):
@@ -205,19 +259,40 @@ class Python():
         :param parent Group:
         :rtype: list[Node]
         """
+
         token = tree.name
+        print(token)
         line_number = tree.lineno
-        print("MAKE OPERATIONS")
+        input_list , output_list = make_function_io(tree)
         processes = make_operations(tree.body)
-        print(processes)
-        return UserDefinedFunc(token, processes , line_number=line_number)
+        docstring = ast.get_docstring(tree)
+        
+        print("PROCESS START ")
+        for pro in processes:
+            if isinstance(pro, LogicStatement):
+                print(pro)
+                for i in pro.process:
+                    print(i)
+            else:
+                print(pro)
+        print("PROCESS END")
+
+        return UserDefinedFunc(
+            token, 
+            processes , 
+            line_number, 
+            docstring, 
+            input_list , 
+            output_list
+        )
     
     @staticmethod
-    def make_class(tree, parent):
+    def make_class(tree,parent):
         assert type(tree) == ast.ClassDef
         _, node_trees, _ , _ = Python.separate_namespaces(tree)
 
         token = tree.name
+        print("Class name",token)
         line_number = tree.lineno
         inherits = get_inherits(tree) 
 

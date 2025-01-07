@@ -7,7 +7,7 @@ import httpx
 import asyncio
 
 from python import Python
-from model import Call, File, UserDefinedClass, Variable, UserDefinedFunc
+from model import Call, File, LogicStatement, UserDefinedClass, Variable, UserDefinedFunc
 # from db.main import CallModel, FileModel, FunctionModel, VariableModel
 
 
@@ -85,7 +85,10 @@ def make_file_group(tree, file_path):
         part for part in file_path.replace('.py', '').split('/') if part and part != '..'
     )
 
-    file_inst = File(token)
+    file_inst = File(token, file_path)
+    print("=================================================================================================")
+    print("FILE_TOKEN:")
+    print(file_inst.file_path)
 
     file_inst.import_list = language.make_import(import_trees)
     # NEXT PR implement nested functino
@@ -94,12 +97,13 @@ def make_file_group(tree, file_path):
 
     # ## NEW VERSION NEXT PR MAKE ROOT NODE FOR FILE GROUP
     file_inst.root_node, file_inst.constant_list = language.make_root_node(body_trees)
-    ## the if statement is inflexible so NEXT PR need to figure out how to improve that 
-    
 
+    ## the if statement is inflexible so NEXT PR need to figure out how to improve that 
     for subgroup_tree in subgroup_trees:
         file_inst.add_classes_list(language.make_class(subgroup_tree, parent=file_inst))
     
+    print(file_inst.classes_list)
+    print("=================================================================================================")
     return file_inst
 
 def main(sys_argv=None):
@@ -158,7 +162,7 @@ def main(sys_argv=None):
         # Iterate through all functions in the current file
         for func in file_symbol.all_func():
             for single_process in func.process:
-                process, ast_tree = single_process
+                process = single_process
 
                 # Extract the comparing token based on the type of `process`
                 parent = None
@@ -194,22 +198,19 @@ def main(sys_argv=None):
         for func in file_symbol.all_func():
             # function_model = FunctionModel( token=func.token,
             #                                 parent=file_model)
-            print(func.token)
+            # print(func.token)
             output= []
-            for process , ast_tree in func.process:
+            for process in func.process:
                 if isinstance(process, Call) and isinstance(process.func, UserDefinedFunc):
                         output.append(process)
                 elif isinstance(process, Variable) and isinstance(process.points_to.func, (UserDefinedClass, UserDefinedFunc)):
                     output.append(process)
-                else:
-                    output.append(ast.unparse(ast_tree))
-
-            print()
-            print(output)
-            print()
-            print("==================================================")
-            print()
-            print()
+            # print()
+            # print(output)
+            # print()
+            # print("==================================================")
+            # print()
+            # print()
             func.output = output
 
 
